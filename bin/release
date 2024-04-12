@@ -1,0 +1,229 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use FindBin;
+use File::Basename;
+use File::Temp qw/tempfile/;
+use File::Copy;
+use File::Path qw/make_path/;
+use DateTime;
+use Data::Dumper;
+use Statocles::Template;
+use DateTime::Format::ISO8601;
+use YAML::PP;
+use Cwd;
+
+use Carp 'verbose';
+$SIG{ __DIE__ } = sub { Carp::confess( @_ ) };
+
+BEGIN { push @::INC, "/usr/lib/build", "$FindBin::Bin/../lib" };
+
+use Build::Rpm;
+use Kanku::ReleaseTools;
+use Kanku::ReleaseTools::BlogPost;
+use Kanku::ReleaseTools::VersionReplace;
+use Kanku::ReleaseTools::ReleaseNotes;
+use Kanku::ReleaseTools::Changelog;
+use Kanku::ReleaseTools::Config;
+
+my $cfg = Kanku::ReleaseTools::Config->new();
+my $conf = $cfg->conf();
+
+print Dumper($conf) if $::ENV{KRT_DEBUG};
+
+my $version = $ARGV[0];
+my $ver_regex = qr/^\d+\.\d+\.\d+$/;
+my $branch = $conf->{branch} || 'master';
+
+if (!$version) {
+  print_usage();
+  exit 1;
+}
+
+my $basedir = "$FindBin::Bin/../..";
+
+my $rt = Kanku::ReleaseTools->new(
+            release            => $version,
+	    destination_branch => $branch,
+	    blog_dir           => $conf->{blogdir},
+            basedir            => $basedir,
+            outdir             => "$FindBin::Bin/../..",
+	    cfg                => $cfg,
+);
+
+if ($rt->check_git_status) {
+  $rt->msg("git has unmerged changes - please commit first");
+  exit 1;
+}
+
+if ($rt->release_not_newer) {
+  $rt->msg("Version $version not newer than latest tag ".$rt->latest_tag."! Exiting...");
+  exit 1;
+}
+
+#if ($conf->{verify_latest_commit}) {
+#
+#
+#}
+
+### Create Blog Post
+my $blog_post = Kanku::ReleaseTools::BlogPost->new(
+	    cfg                => $cfg,
+            release            => $version,
+            destination_branch => $branch,
+            blog_dir           => $conf->{blogdir},
+	    blogurl            => $conf->{blogurl},
+            basedir            => $basedir,
+            outdir             => "$FindBin::Bin/../..",
+          );
+
+my $action='r';
+
+my $commit_default  = 'y';
+my $preview_default = 'y';
+
+if ($blog_post->already_exists) {
+  $action = $rt->dialog(
+      "Blog post '".$blog_post->outfile."' already exists!",
+      "Please select an action:",
+      " * k - keep it and proceed without changes",
+      " * e - edit the current version",
+      " * r - recreate from scratch",
+      "",
+      {
+        selection => {
+	  'k' => 'k(eep)?',
+	  'e' => 'e(dit)?',
+	  'r' => 'r(ecreate)?',
+	},
+	default => 'k',
+      },
+  );
+}
+
+if ($action eq 'k') {
+  $commit_default  = 'n';
+  $preview_default = 'n';
+  $rt->msg('You have choosen to keep the current version of '.$blog_post->outfile); 
+} elsif ($action eq 'e') {
+  $blog_post->edit_existing_blog_post();
+} elsif ($action eq 'r') {
+  $blog_post->create_blog_post;
+  $blog_post->write_blog_post;
+}
+
+$blog_post->build_blog($preview_default, $commit_default);
+$blog_post->commit_blog();
+
+my $old_cwd = Cwd::cwd();
+chdir $basedir;
+
+my $blog_releases = $rt->blog_releases;
+
+my ($cur_branch) = $rt->current_branch;
+$rt->git(0, 1, 'checkout', $branch);
+
+my @files_to_stash;
+
+### Create RELEASE-NOTES-<version>.md in master/main
+# FIXME:
+my $rn = Kanku::ReleaseTools::ReleaseNotes->new(
+           release   => $version,
+	   blog_dir  => $conf->{blogdir},
+           basedir   => $basedir,
+           outdir    =>  "$FindBin::Bin/../..",
+	   outfile   => "RELEASE-NOTES-$version.md",
+	   cfg       => $cfg,
+         );
+
+push @files_to_stash, $rn->create;
+
+
+### Replace version in configured files
+for my $file (@{$conf->{version_replace}||[]}) {
+  my $vr = Kanku::ReleaseTools::VersionReplace->new(
+            release   => $version,
+	    blog_dir  => $conf->{blogdir},
+	    outfile   => $file->{file},
+            basedir   => $basedir,
+            outdir    => "$FindBin::Bin/../..",
+	    cfg       => $cfg,
+  );
+  $vr->printlog("VR-OUTFILE: ".$vr->outfile);
+  my $out = $vr->update_version($file->{pattern}, $file->{replacement});
+  push @files_to_stash, $vr->write_file_for_stashing;
+}
+
+### Update Changelogs
+for my $file (@{$conf->{changelogs}||[]}) {
+  my $chl = Kanku::ReleaseTools::Changelog->new(
+            release   => $version,
+	    blog_dir  => $conf->{blogdir},
+            basedir   => $basedir,
+            outdir    => "$FindBin::Bin/../..",
+	    outfile   => $file->{file},
+	    format    => $file->{format},
+	    project   => $conf->{project},
+	    cfg       => $cfg,
+  );
+  
+  $chl->update();
+  push @files_to_stash, $chl->write_new_changelog();
+}
+
+$rt->git(0, 1, 'add', '--', "@files_to_stash");
+$rt->git(0, 1, 'commit', '-m', "'[dist] update files for release $version'");
+$rt->git(0, 1, 'tag', '-a', '-s', '-m', "'Bump to version $version'", $version);
+
+for my $branch (
+    $conf->{blog}->{source_branch},
+    $conf->{blog}->{publish_branch},
+    $conf->{branch}
+  ) {
+    for my $logline ($rt->git_last_log($branch, 3)) {
+      print $logline;
+    };
+}
+
+for my $stashline ($rt->git(0, 1, 'stash', 'list')) {
+   print $stashline;
+}
+
+my $ready = $rt->dialog(
+  "#" x 72 . "\n".
+  "                 READY TO RELEASE? [yN]\n\n".
+  " includes:\n".
+  "\n".
+  " * push to $conf->{branch} to upstream\n".
+  " * release blog post on $conf->{blog}->{blogurl}\n".
+  "\n"
+);
+
+if ($ready =~ /^y(es)?/i ) {
+  $rt->git(0, 1, 'push');
+  $rt->git(0, 1, 'checkout', $conf->{blog}->{source_branch});
+  $blog_post->deploy_blog;
+}
+
+print <<EOF ;
+# TODO:
+# 
+# * Trigger service run in staging project
+# * Wait for build results in staging
+# * [IF] staging ok
+#   * update sources in devel project
+#   * commit
+#   * wait for results
+#   * [IF] devel ok
+#     * create SR to Factory
+#     * SRs to configurable list of projects (e.g. Backports)
+EOF
+
+exit 0;
+
+sub print_usage {
+  my $bn = basename($0);
+  print STDERR "$bn <version>\n";
+}
