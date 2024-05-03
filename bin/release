@@ -27,6 +27,7 @@ use Kanku::ReleaseTools::VersionReplace;
 use Kanku::ReleaseTools::ReleaseNotes;
 use Kanku::ReleaseTools::Changelog;
 use Kanku::ReleaseTools::Config;
+use Kanku::ReleaseTools::POD;
 
 my $cfg = Kanku::ReleaseTools::Config->new();
 my $conf = $cfg->conf();
@@ -62,6 +63,18 @@ if ($rt->release_not_newer) {
   $rt->msg("Version $version not newer than latest tag ".$rt->latest_tag."! Exiting...");
   exit 1;
 }
+
+### Create/Update POD
+#
+my $pod = Kanku::ReleaseTools::POD->new(
+  basedir => "$FindBin::Bin/../..",
+  %{$conf->{'Kanku::ReleaseTools::POD'}||{}},
+);
+
+my @pod_files = $pod->generate_html();
+
+$rt->git(0, 1, 'add', '--', "@pod_files");
+$rt->git(0, 1, 'commit', '-m', "'[doc] autoupdate POD html files ($version)'");
 
 #if ($conf->{verify_latest_commit}) {
 #
