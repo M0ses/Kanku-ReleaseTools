@@ -1,0 +1,74 @@
+#!/bin/bash
+
+### FUNCTIONS
+
+function krt_dir {
+  fl=$(printf %.1s "$0")
+
+  if [ "$fl" == '/' ];then
+    DIRNAME=`dirname $0`
+  else
+    DIRNAME=$(readlink -f `pwd`/`dirname $0`)
+  fi
+  echo $DIRNAME
+}
+
+function prj_dir {
+  d=$1
+  while [ "$d" != '/' ];do
+    if [ -f $d/.krt.yml ];then
+      echo $d
+      break
+    fi
+    d=$(dirname $d)
+  done
+}
+
+function gitl {
+  for i in $BRANCHES;do
+    PAGER= git l -4
+    echo
+  done
+}
+
+### MAIN
+
+KRT_DIR=$(krt_dir)
+
+PRJ_DIR=`prj_dir $KRT_DIR`
+
+pushd .
+
+cd $PRJ_DIR
+
+BRANCHES="master gh-pages-src"
+
+TAG=$1
+
+gitl
+
+echo
+echo "Reset to origin?"
+read YN
+
+for i in $BRANCHES
+do
+  echo "######################################################################"
+  echo "#### Branch: $i"
+  if [ "$YN" == "y" ];then
+    git checkout $i
+    git reset --hard origin/$i
+  fi
+done
+
+gitl
+
+ttag=`git tag -l $TAG`
+
+if [ "$ttag" == "$TAG" ];then
+  git tag -d $TAG
+fi
+
+popd
+
+exit 0
