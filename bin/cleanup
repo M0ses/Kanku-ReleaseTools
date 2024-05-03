@@ -26,15 +26,57 @@ function prj_dir {
 
 function gitl {
   for i in $BRANCHES;do
+    echo '####################################################################'
+    echo "# Branch: $i"
+    echo '####################################################################'
     PAGER= git l -4
     echo
   done
 }
 
+function print_usage {
+  BN=`basename $0`
+  cat <<EOF
+
+Usage: $BN <TAG>
+
+* Reset branches $BRANCHES hard to state of origin
+* Delete tag <TAG>
+
+EOF
+}
+
+function reset_branches {
+  for i in $BRANCHES
+  do
+    echo "######################################################################"
+    echo "#### Branch: $i"
+    echo "######################################################################"
+    git checkout $i
+    git reset --hard origin/$i
+  done
+}
+
 ### MAIN
+if [ -z "$1" ];then
+  print_usage
+  exit 1
+fi
+
+TAG=$1
+
+if [ "$TAG" != "0" ];then
+  ttag=`git tag -l $TAG`
+
+  if [ "$ttag" == "$TAG" ];then
+    git tag -d $TAG
+  else
+    echo "Tag $TAG not found" 
+    exit 1
+  fi
+fi
 
 KRT_DIR=$(krt_dir)
-
 PRJ_DIR=`prj_dir $KRT_DIR`
 
 pushd .
@@ -43,31 +85,15 @@ cd $PRJ_DIR
 
 BRANCHES="master gh-pages-src"
 
-TAG=$1
-
 gitl
 
 echo
 echo "Reset to origin?"
 read YN
 
-for i in $BRANCHES
-do
-  echo "######################################################################"
-  echo "#### Branch: $i"
-  if [ "$YN" == "y" ];then
-    git checkout $i
-    git reset --hard origin/$i
-  fi
-done
+[ "$YN" == "y" ] && reset_branches
 
 gitl
-
-ttag=`git tag -l $TAG`
-
-if [ "$ttag" == "$TAG" ];then
-  git tag -d $TAG
-fi
 
 popd
 
