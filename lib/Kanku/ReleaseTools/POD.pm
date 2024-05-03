@@ -70,13 +70,14 @@ sub generate_html {
     $podhtml_LOT{$p} = "$h.html";
   }
 
+  # Cleanup tree
   remove_tree($outdir);
+  make_path($outdir);
 
   while (my ($package, $file) = each %files) {
     my $of = "$outdir/$package.html";
-    -d $outdir || make_path($outdir);
-    $self->convert($file, $of, \%podhtml_LOT);
-    push @new_files, $of;
+    $self->convert($file, $of, \%podhtml_LOT) &&
+      push @new_files, $of;
   }
 
   chdir $curdir;
@@ -160,13 +161,15 @@ EOF
     my $content = $self->_read_file_from_branch($in_file);
     $p->parse_string_document($content);
     if ($html) {
-      print "$out_file\n";
       my $of;
       open($of, '>', $out_file) || die "Could not open $of: $!\n";
       binmode $of, ':bytes';
-      print $of $html;
-      close $of;
+      print $of $html || die "Could not write $of: $!\n";;
+      close $of || die "Could not close $of: $!\n";
+    } else {
+      return 0;
     }
+    return 1;
 }
 
 sub _read_file_from_branch {
