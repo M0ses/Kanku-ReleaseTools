@@ -2,9 +2,6 @@ package Kanku::ReleaseTools::POD;
 
 use Moose;
 
-my $debuglevel = 9;
-use Pod::Simple::Debug (\$debuglevel, 0);
-use Pod::Simple::HTML;
 use FindBin;
 use File::Path qw(make_path remove_tree);
 use URI::Escape;
@@ -89,6 +86,8 @@ sub generate_html {
 
 sub convert {
     my ($self, $in_file, $out_file, $podhtml_LOT) = @_;
+    # Late loading to avoid problems with Pod::Simple::Debug
+    require Pod::Simple::HTML;
     my $p = Pod::Simple::HTML->new;
     $p->{podhtml_LOT} = $podhtml_LOT;
     $p->html_css('../../theme/css/statocles-default.css'),

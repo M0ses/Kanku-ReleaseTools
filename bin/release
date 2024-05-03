@@ -10,7 +10,6 @@ use File::Copy;
 use File::Path qw/make_path/;
 use DateTime;
 use Data::Dumper;
-use Statocles::Template;
 use DateTime::Format::ISO8601;
 use YAML::PP;
 use Cwd;
@@ -18,7 +17,9 @@ use Cwd;
 use Carp 'verbose';
 $SIG{ __DIE__ } = sub { Carp::confess( @_ ) };
 
-BEGIN { push @::INC, "/usr/lib/build", "$FindBin::Bin/../lib" };
+BEGIN {
+  push @::INC, "/usr/lib/build", "$FindBin::Bin/../lib";
+};
 
 use Build::Rpm;
 use Kanku::ReleaseTools;
